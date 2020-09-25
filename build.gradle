@@ -1,0 +1,120 @@
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    configurations.maybeCreate("pitest")
+    dependencies {
+        classpath 'info.solidsoft.gradle.pitest:gradle-pitest-plugin:1.4.5'
+        pitest 'org.pitest:pitest-junit5-plugin:0.10'
+    }
+}
+
+plugins {
+    id 'java'
+    id 'jacoco'
+    id 'distribution'
+}
+
+apply plugin: "info.solidsoft.pitest"
+
+group 'com.interview'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+    jacocoRuntime
+}
+
+task instrument(dependsOn: [classes, project.configurations.jacocoAnt]) {
+
+    inputs.files classes.outputs.files
+    File outputDir = new File(project.buildDir, 'instrumentedClasses')
+    outputs.dir outputDir
+    doFirst {
+        project.delete(outputDir)
+        ant.taskdef(
+                resource: 'org/jacoco/ant/antlib.xml',
+                classpath: project.configurations.jacocoAnt.asPath,
+                uri: 'jacoco'
+        )
+        def instrumented = false
+        if (file(sourceSets.main.java.outputDir).exists()) {
+            def instrumentedClassedDir = "${outputDir}/${sourceSets.main.java}"
+            ant.'jacoco:instrument'(destdir: instrumentedClassedDir) {
+                fileset(dir: sourceSets.main.java.outputDir, includes: '**/*.class')
+            }
+            //Replace the classes dir in the test classpath with the instrumented one
+            sourceSets.test.runtimeClasspath -= files(sourceSets.main.java.outputDir)
+            sourceSets.test.runtimeClasspath += files(instrumentedClassedDir)
+            instrumented = true
+        }
+        if (instrumented) {
+            //Disable class verification based on https://github.com/jayway/powermock/issues/375
+            test.jvmArgs += '-noverify'
+        }
+    }
+}
+
+test {
+    jacoco {
+        append = false
+        destinationFile = file("jacoco/jacocoTest.exec")
+    }
+    reports.junitXml.destination = file("jacoco/test-results")
+    useJUnitPlatform {
+    }
+}
+
+jacocoTestReport {
+    test.dependsOn instrument
+    dependsOn test
+}
+
+pitest {
+    pitestVersion = "1.4.9"
+    testPlugin = "junit5"
+    outputFormats = ['XML', 'HTML']
+    timestampedReports = false
+}
+
+dependencies {
+    jacocoRuntime group: 'org.jacoco', name: 'org.jacoco.agent', version: '0.8.4', classifier: 'runtime'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.3.1'
+    testCompile group: 'junit', name: 'junit', version: ''
+    testCompile group: 'org.powermock', name: 'powermock-api-mockito-common', version: '1.6.5'
+    testCompile group: 'org.powermock', name: 'powermock-module-junit4', version: '2.0.7'
+    testCompile group: 'org.powermock', name: 'powermock-api-mockito2', version: '2.0.2'
+    testCompile group: 'org.mockito', name: 'mockito-core', version: '2.23.4'
+    testCompile group: 'org.mockito', name: 'mockito-junit-jupiter', version: '2.23.0'
+    testCompile group: 'org.junit.platform', name: 'junit-platform-runner', version: '1.2.0'
+    testCompile group: 'org.assertj', name: 'assertj-core', version: '3.11.1'
+    testCompile("org.junit.jupiter:junit-jupiter-params:5.4.2")
+
+
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.3.1'
+    testRuntimeOnly 'org.junit.vintage:junit-vintage-engine:5.6.2'
+}
+
+distributions {
+    deliverables {
+        baseName = 'sbe_coding'
+        contents {
+            from '.'
+            exclude '.vs'
+            exclude 'build'
+            exclude 'gradle'
+            exclude '.gradle'
+            exclude '.idea'
+        }
+    }
+}
+
+distZip.dependsOn(deliverablesDistZip)
+
+task submit(type: GradleBuild) {
+    tasks = ['clean', 'distZip']
+}
+
